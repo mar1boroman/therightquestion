@@ -1,0 +1,46 @@
+name: Build catalog
+on: [push]
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate catalog.json
+        run: |
+          node - <<'EOF'
+          import { promises as fs } from 'fs';
+          import path from 'path';
+
+          async function walk(dir) {
+            const dirents = await fs.readdir(dir, { withFileTypes: true });
+            let files = [];
+            for (const d of dirents) {
+              const res = path.join(dir, d.name);
+              if (d.isDirectory()) files = files.concat(await walk(res));
+              else if (res.endsWith('.md')) files.push(res);
+            }
+            return files;
+          }
+
+          const items = [];
+          for (const f of await walk('questions')) {
+            const [title, ...rest] = (await fs.readFile(f, 'utf8')).split(/\n/);
+            items.push({
+              category: f.split(path.sep)[1],
+              filename: path.basename(f),
+              title: title.replace(/^#?\s*/, ''),
+              body: rest.join('\n').slice(0, 300)        // first 300 chars
+            });
+          }
+          await fs.writeFile(
+            'questions/catalog.json',
+            JSON.stringify(items, null, 0)
+          );
+          EOF
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "build: update catalog.json"
+          file_pattern: "questions/catalog.json"
