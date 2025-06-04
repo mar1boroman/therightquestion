@@ -1,16 +1,10 @@
 <!--
-  Prompt Library – GitHub‑Pages Edition (Bootstrap)
-  -------------------------------------------------
-  Static single‑page app that browses Markdown prompts stored in
-  /questions/<category>/<file>.md inside this repo.  No build step.
-
-  Key features added in this version:
-  • Bootstrap 5 styling (removed Tailwind)
-  • Proper Markdown rendering (Showdown) + Prism.js code highlighting
-  • Fuzzy search (Fuse.js) with localStorage caching of the index
-  • Pretty hash‑based URLs: #/category[/file]
-  • catalog.json optimisation – if /questions/catalog.json exists it will
-    be fetched to avoid GitHub API rate limits (fallback to live API scan)
+  Prompt Library – GitHub-Pages Edition (Bootstrap + Copy-able Code)
+  ----------------------------------------------------------------
+  Static single-page app browsing Markdown prompts under /questions/*.
+  This version adds:
+  • Prism.js toolbar + copy-to-clipboard plugin on every code block
+  • Fallback "language-none" class for blocks without explicit language tag
 -->
 <!DOCTYPE html>
 <html lang="en" class="h-100">
@@ -20,213 +14,164 @@
     <title>Prompt Library</title>
 
     <!-- Bootstrap CSS -->
-    <link
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-      rel="stylesheet"
-    />
-    <!-- Prism.js syntax highlighting -->
-    <link
-      href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.css"
-      rel="stylesheet"
-    />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
 
-    <!-- dependencies -->
+    <!-- Prism core + theme -->
+    <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism.css" rel="stylesheet" />
+    <!-- Prism toolbar + copy-to-clipboard plugin -->
+    <link href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/toolbar/prism-toolbar.css" rel="stylesheet" />
+
+    <!-- libs -->
     <script src="https://cdn.jsdelivr.net/npm/showdown@2.1.0/dist/showdown.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/fuse.js@6.6.2"></script>
     <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/toolbar/prism-toolbar.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/plugins/copy-to-clipboard/prism-copy-to-clipboard.min.js"></script>
   </head>
   <body class="d-flex flex-column h-100">
     <!-- NAVBAR -->
     <nav class="navbar navbar-light bg-light px-3">
       <span class="navbar-brand mb-0 h1">📚 Prompt Library</span>
       <form class="d-flex ms-3 flex-grow-1" role="search">
-        <input
-          id="searchInput"
-          class="form-control"
-          type="search"
-          placeholder="Search prompts…"
-          aria-label="Search"
-        />
+        <input id="searchInput" class="form-control" type="search" placeholder="Search prompts…" aria-label="Search" />
       </form>
     </nav>
 
-    <!-- MAIN LAYOUT -->
+    <!-- MAIN -->
     <div class="d-flex flex-grow-1 overflow-hidden">
-      <!-- Sidebar: categories -->
-      <div
-        id="sidebar"
-        class="border-end p-3 overflow-auto"
-        style="width: 220px"
-      ></div>
-
-      <!-- File list -->
-      <div
-        id="fileList"
-        class="border-end p-3 overflow-auto d-none d-lg-block"
-        style="width: 260px"
-      ></div>
-
-      <!-- Markdown viewer -->
+      <div id="sidebar" class="border-end p-3 overflow-auto" style="width: 220px"></div>
+      <div id="fileList" class="border-end p-3 overflow-auto d-none d-lg-block" style="width: 260px"></div>
       <article id="viewer" class="flex-grow-1 p-4 overflow-auto"></article>
     </div>
 
     <script>
-      // --------------------------- CONFIG ---------------------------
-      const OWNER = "mar1boroman"; // ← change
-      const REPO = "therightquestion";        // ← change
-      const BRANCH = "main";              // or "main"
+      // ---------- CONFIG ----------
+      const OWNER = "mar1boroman";
+      const REPO = "therightquestion";
+      const BRANCH = "main";
       const QUESTIONS_DIR = "questions";
       const apiBase = `https://api.github.com/repos/${OWNER}/${REPO}/contents`;
       const rawBase = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`;
 
-      // --------------------------- GLOBALS --------------------------
+      // ---------- UTILS ----------
       const $ = (id) => document.getElementById(id);
-      const converter = new showdown.Converter({
-        tables: true,
-        ghCodeBlocks: true,
-        simplifiedAutoLink: true,
-      });
-      let promptsIndex = [];
-      let fuse;
+      const converter = new showdown.Converter({ tables: true, ghCodeBlocks: true, simplifiedAutoLink: true });
 
-      // --------------------------- CATALOG --------------------------
-      async function fetchCatalog() {
-        try {
-          const res = await fetch(`${rawBase}/${QUESTIONS_DIR}/catalog.json`);
-          if (res.ok) return res.json();
-        } catch (_) {}
-        return null; // will trigger live scan
-      }
-
-      async function liveScanRepo() {
-        const categories = await fetchJSON(`${apiBase}/${QUESTIONS_DIR}`);
-        const catalog = [];
-        for (const dir of categories.filter((d) => d.type === "dir")) {
-          const files = await fetchJSON(`${apiBase}/${QUESTIONS_DIR}/${dir.name}`);
-          for (const file of files.filter((f) => f.name.endsWith(".md"))) {
-            const raw = await fetch(
-              `${rawBase}/${QUESTIONS_DIR}/${dir.name}/${file.name}`
-            ).then((r) => r.text());
-            const [titleLine, ...body] = raw.split(/\n/);
-            catalog.push({
-              category: dir.name,
-              filename: file.name,
-              title: titleLine.replace(/^#?\s*/, ""),
-              body: body.join("\n"),
-            });
-          }
-        }
-        return catalog;
-      }
-
-      async function buildSearchIndex() {
-        // try cache first
-        const cache = localStorage.getItem("promptsIndex_v1");
-        if (cache) {
-          try {
-            const { ts, data } = JSON.parse(cache);
-            if (Date.now() - ts < 24 * 60 * 60 * 1000) {
-              promptsIndex = data;
-              fuse = new Fuse(promptsIndex, {
-                keys: ["title", "body", "category"],
-                threshold: 0.3,
-              });
-              return;
-            }
-          } catch (_) {}
-        }
-
-        let catalog = await fetchCatalog();
-        if (!catalog) catalog = await liveScanRepo();
-        promptsIndex = catalog;
-        localStorage.setItem(
-          "promptsIndex_v1",
-          JSON.stringify({ ts: Date.now(), data: promptsIndex })
-        );
-        fuse = new Fuse(promptsIndex, {
-          keys: ["title", "body", "category"],
-          threshold: 0.3,
-        });
-      }
-
-      // --------------------------- FETCH UTILS -----------------------
       async function fetchJSON(url) {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status} – ${url}`);
         return res.json();
       }
 
-      // --------------------------- SIDEBAR --------------------------
+      // ---------- DATA ----------
+      let promptsIndex = [];
+      let fuse;
+
+      async function fetchCatalog() {
+        try {
+          const res = await fetch(`${rawBase}/${QUESTIONS_DIR}/catalog.json`);
+          if (res.ok) return res.json();
+        } catch (_) {}
+        return null;
+      }
+
+      async function liveScanRepo() {
+        const dirs = await fetchJSON(`${apiBase}/${QUESTIONS_DIR}`);
+        const cat = [];
+        for (const dir of dirs.filter((d) => d.type === "dir")) {
+          const files = await fetchJSON(`${apiBase}/${QUESTIONS_DIR}/${dir.name}`);
+          for (const file of files.filter((f) => f.name.endsWith(".md"))) {
+            const raw = await fetch(`${rawBase}/${QUESTIONS_DIR}/${dir.name}/${file.name}`).then((r) => r.text());
+            const [titleLine, ...body] = raw.split(/\n/);
+            cat.push({ category: dir.name, filename: file.name, title: titleLine.replace(/^#?\s*/, ""), body: body.join("\n") });
+          }
+        }
+        return cat;
+      }
+
+      async function buildSearchIndex() {
+        const cache = localStorage.getItem("promptsIndex_v2");
+        if (cache) {
+          const { ts, data } = JSON.parse(cache);
+          if (Date.now() - ts < 24 * 60 * 60 * 1000) {
+            promptsIndex = data;
+            fuse = new Fuse(promptsIndex, { keys: ["title", "body", "category"], threshold: 0.3 });
+            return;
+          }
+        }
+        let catalog = await fetchCatalog();
+        if (!catalog) catalog = await liveScanRepo();
+        promptsIndex = catalog;
+        localStorage.setItem("promptsIndex_v2", JSON.stringify({ ts: Date.now(), data: promptsIndex }));
+        fuse = new Fuse(promptsIndex, { keys: ["title", "body", "category"], threshold: 0.3 });
+      }
+
+      // ---------- UI BUILD ----------
       async function loadSidebar() {
         const cats = [...new Set(promptsIndex.map((p) => p.category))].sort();
         const sb = $("sidebar");
         sb.innerHTML = "";
-        cats.forEach((cat) => {
+        cats.forEach((c) => {
           const btn = document.createElement("button");
           btn.className = "btn btn-link w-100 text-start text-decoration-none";
-          btn.textContent = cat;
+          btn.textContent = c;
           btn.addEventListener("click", () => {
-            window.location.hash = `#/` + encodeURIComponent(cat);
+            location.hash = `#/` + encodeURIComponent(c);
           });
           sb.appendChild(btn);
         });
       }
 
-      // --------------------------- LIST FILES -----------------------
       function showFileList(category) {
         const fl = $("fileList");
+        if (!category) return fl.classList.add("d-none");
         fl.classList.remove("d-none");
         fl.innerHTML = `<h5 class="text-capitalize mb-3">${category}</h5>`;
-        promptsIndex
-          .filter((p) => p.category === category)
-          .sort((a, b) => a.title.localeCompare(b.title))
-          .forEach((p) => {
-            const a = document.createElement("a");
-            a.href = `#/` +
-              encodeURIComponent(category) +
-              "/" +
-              encodeURIComponent(p.filename);
-            a.className = "d-block text-body small mb-1 text-truncate";
-            a.textContent = p.title;
-            fl.appendChild(a);
-          });
+        promptsIndex.filter((p) => p.category === category).sort((a, b) => a.title.localeCompare(b.title)).forEach((p) => {
+          const a = document.createElement("a");
+          a.href = `#/` + encodeURIComponent(category) + "/" + encodeURIComponent(p.filename);
+          a.className = "d-block text-body small mb-1 text-truncate";
+          a.textContent = p.title;
+          fl.appendChild(a);
+        });
       }
 
-      // --------------------------- RENDER MARKDOWN ------------------
       async function renderMarkdown(category, filename) {
         const viewer = $("viewer");
         if (!category || !filename) {
-          viewer.innerHTML =
-            "<p class='text-muted'>Select a prompt from the sidebar to begin.</p>";
+          viewer.innerHTML = "<p class='text-muted'>Select a prompt from the sidebar to begin.</p>";
           return;
         }
-        const url = `${rawBase}/${QUESTIONS_DIR}/${category}/${filename}`;
-        const md = await fetch(url).then((r) => r.text());
-        viewer.innerHTML = converter.makeHtml(md);
+        const mdText = await fetch(`${rawBase}/${QUESTIONS_DIR}/${category}/${filename}`).then((r) => r.text());
+        viewer.innerHTML = converter.makeHtml(mdText);
+
+        // Ensure every code block has a language for Prism + copy toolbar
+        viewer.querySelectorAll("pre > code").forEach((codeEl) => {
+          if (![...codeEl.classList].some((c) => c.startsWith("language-"))) {
+            codeEl.classList.add("language-none");
+          }
+        });
         Prism.highlightAll();
       }
 
-      // --------------------------- SEARCH ---------------------------
+      // ---------- SEARCH ----------
       $("searchInput").addEventListener("input", (e) => {
         const q = e.target.value.trim();
-        if (!q) return $("fileList").classList.add("d-none");
-        const results = fuse.search(q).slice(0, 25).map((r) => r.item);
         const fl = $("fileList");
+        if (!q) return fl.classList.add("d-none");
+        const results = fuse.search(q).slice(0, 25).map((r) => r.item);
         fl.classList.remove("d-none");
-        fl.innerHTML = `<h6>Results for "${q}"</h6>`;
+        fl.innerHTML = `<h6>Results for \"${q}\"</h6>`;
         results.forEach((r) => {
           const a = document.createElement("a");
-          a.href = `#/` +
-            encodeURIComponent(r.category) +
-            "/" +
-            encodeURIComponent(r.filename);
+          a.href = `#/` + encodeURIComponent(r.category) + "/" + encodeURIComponent(r.filename);
           a.className = "d-block small mb-1 text-truncate";
           a.textContent = `${r.title} (${r.category})`;
           fl.appendChild(a);
         });
       });
 
-      // --------------------------- ROUTER ---------------------------
+      // ---------- ROUTER ----------
       function route() {
         const [, cat, file] = decodeURIComponent(location.hash).split("/");
         if (cat) showFileList(cat);
@@ -234,11 +179,11 @@
       }
       window.addEventListener("hashchange", route);
 
-      // --------------------------- INIT -----------------------------
+      // ---------- INIT ----------
       (async () => {
         await buildSearchIndex();
         await loadSidebar();
-        route(); // render current hash (or default)
+        route();
       })();
     </script>
   </body>
