@@ -1,6 +1,9 @@
 name: Build catalog
 on: [push]
 
+permissions:
+  contents: write  
+  
 jobs:
   catalog:
     runs-on: ubuntu-latest
