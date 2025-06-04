@@ -1,14 +1,14 @@
 <!--
-  Prompt Library – GitHub-Pages Edition (Bootstrap)
+  Prompt Library – GitHub‑Pages Edition (Bootstrap)
   -------------------------------------------------
-  Static single-page app that browses Markdown prompts stored in
+  Static single‑page app that browses Markdown prompts stored in
   /questions/<category>/<file>.md inside this repo.  No build step.
 
   Key features added in this version:
   • Bootstrap 5 styling (removed Tailwind)
   • Proper Markdown rendering (Showdown) + Prism.js code highlighting
   • Fuzzy search (Fuse.js) with localStorage caching of the index
-  • Pretty hash-based URLs: #/category[/file]
+  • Pretty hash‑based URLs: #/category[/file]
   • catalog.json optimisation – if /questions/catalog.json exists it will
     be fetched to avoid GitHub API rate limits (fallback to live API scan)
 -->
@@ -72,9 +72,9 @@
 
     <script>
       // --------------------------- CONFIG ---------------------------
-      const OWNER = "<YOUR-GITHUB-USERNAME>"; // ← change
-      const REPO = "<YOUR-REPO-NAME>";        // ← change
-      const BRANCH = "gh-pages";              // or "main"
+      const OWNER = "mar1boroman"; // ← change
+      const REPO = "therightquestion";        // ← change
+      const BRANCH = "main";              // or "main"
       const QUESTIONS_DIR = "questions";
       const apiBase = `https://api.github.com/repos/${OWNER}/${REPO}/contents`;
       const rawBase = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`;
